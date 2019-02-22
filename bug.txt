@@ -1,0 +1,187 @@
+PeriodicTask doesn't honor "default task queue option"
+
+
+
+# Checklist
+
+- [X] I have included the output of ``celery -A proj report`` in the issue.
+    (if you are not able to do this, then at least specify the Celery
+     version affected).
+- [X] I have included all related issues and possible duplicate issues in this issue.
+- [X] I have included the contents of ``pip freeze`` in the issue.
+- [X] I have verified that the issue exists against the `master` branch of Celery.
+- [X] I have tried reproducing the issue on more than one message broker and/or result backend.
+- [X] I have tried reproducing the issue on more than one workers pool.
+- [X] I have tried reproducing the issue with retries, ETA/Countdown & rate limits disabled.
+
+## Related Issues and Possible Duplicates
+
+#### Related Issues
+
+- None
+
+#### Possible Duplicates
+
+- None
+
+## Environment & Settings
+
+**Celery version**: 4.2.1 (windowlicker) & 4.3.0rc1 (rhubarb)
+
+<details>
+<summary><b><code>celery report</code> Output:</b></summary>
+<p>
+
+```
+software -> celery:4.2.1 (windowlicker) kombu:4.2.1 py:3.6.4
+            billiard:3.5.0.3 redis:2.10.6
+platform -> system:Darwin arch:64bit imp:CPython
+loader   -> celery.loaders.app.AppLoader
+settings -> transport:redis results:django-db
+
+software -> celery:4.3.0rc1 (rhubarb) kombu:4.3.0 py:3.6.4
+            billiard:3.6.0.0 py-amqp:2.4.1
+platform -> system:Darwin arch:64bit
+            kernel version:18.2.0 imp:CPython
+loader   -> celery.loaders.app.AppLoader
+settings -> transport:pyamqp results:disabled
+```
+
+</p>
+</details>
+
+# Steps to Reproduce
+
+Install a celery beat
+
+## Required Dependencies
+
+* **Minimal Python Version**: 3.6.4
+* **Minimal Broker Version**: redis 4.0.8 / rabbitmq 3.7.5
+* **Minimal Result Backend Version**: Disabled / django 2.0.2
+* **Minimal OS and/or Kernel Version**: system:Darwin arch:64bit kernel version:18.2.0
+* **Minimal Broker Client Version**: redis:2.10.6 / py-amqp:2.4.1
+* **Minimal Result Backend Client Version**: Disabled / django-db
+
+### Python Packages
+
+<details>
+<summary><b><code>pip freeze</code> Output:</b></summary>
+<p>
+
+```
+amqp==2.4.1
+billiard==3.5.0.5
+celery==4.2.1
+kombu==4.3.0
+pytz==2018.9
+vine==1.2.0
+```
+
+</p>
+</details>
+
+### Other Dependencies
+
+<details>
+<p>
+N/A
+</p>
+</details>
+
+## Minimally Reproducible Test Case
+
+I couldn't figure a way to add the test to the integration tests; are there integration tests for celery beat?
+
+<details>
+Repository for the source of the following example:
+https://github.com/asfaltboy/celery_reproduce_5355
+
+<p>
+
+```python
+# tasks.py
+from celery import Celery
+from celery.signals import task_prerun
+
+app = Celery('tasks', broker='pyamqp://guest@localhost//')
+
+
+@app.task()
+def add(x, y):
+    print(x + y)
+    return x + y
+
+
+@app.task(queue='custom')
+def multiply(x, y):
+    print(x * y)
+    return x * y
+
+
+@task_prerun.connect()
+def task_prerun(sender=None, task_id=None, task=None, **kwargs):
+    """ Log out some meta-info on the task being handled by worker """
+    print(
+        f"Handling {task.name} - {task_id} on queue: "
+        f"{sender.request.delivery_info['routing_key']}"
+    )
+
+
+app.conf.beat_schedule = {
+    'add-every-2-seconds': {
+        'task': 'tasks.add',
+        'schedule': 2.0,
+        'args': (16, 16)
+    },
+    'multiple-every-2-seconds': {
+        'task': 'tasks.multiply',
+        'schedule': 2.0,
+        'args': (5, 5)
+    },
+}
+app.conf.timezone = 'UTC'
+```
+
+We launch the worker and beat (in sepearate windows):
+
+```bash
+$ pythonloc -m celery -A tasks worker -Q celery,custom
+
+$ pythonloc -m celery -A tasks beat
+```
+
+And we prepare a script to schedule the tasks:
+
+```python
+# run_delay.py
+from tasks import add, multiply
+
+print(add.delay(4, 4))
+print(multiply.delay(2, 2))
+```
+
+The result of running `add` and `multiply` tasks by first calling `delay()` and then from beat:
+
+```bash
+[2019-02-22 22:37:19,666: WARNING/ForkPoolWorker-2] Handling tasks.add - d159d2cf-6135-49ba-ab81-f51ef0a52c47 on queue: celery
+[2019-02-22 22:37:19,667: WARNING/ForkPoolWorker-2] 8
+[2019-02-22 22:37:19,668: WARNING/ForkPoolWorker-1] Handling tasks.multiply - a1f09a7b-0a4c-4792-a35e-de705ed632f7 on queue: custom
+[2019-02-22 22:37:19,669: WARNING/ForkPoolWorker-1] 4
+
+[2019-02-22 22:37:21,955: WARNING/ForkPoolWorker-2] Handling tasks.add - ad8adc92-d190-4edc-9679-64e079e0076d on queue: celery
+[2019-02-22 22:37:21,955: WARNING/ForkPoolWorker-2] 32
+[2019-02-22 22:37:21,958: WARNING/ForkPoolWorker-1] Handling tasks.multiply - 476691f5-fe61-47d7-a7d3-431a63c530b6 on queue: custom
+[2019-02-22 22:37:21,958: WARNING/ForkPoolWorker-1] 25
+```
+
+</p>
+</details>
+
+# Expected Behavior
+
+We expect both delay and beat to use the given task's queue option, as supplied to the task decorator (e.g `custom` for our multiply task).
+
+# Actual Behavior
+
+Calling delay respects the given queue and runs the task in workers that consume from that queue. However, celery beat only scheduled the tasks on the default "celery" queue disregarding the `queue=` option of the task, thus not being consumed by workers consuming from the `custom` queue.
