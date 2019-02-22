@@ -1,6 +1,4 @@
-PeriodicTask doesn't honor "default task queue option"
-
-
+TITLE: PeriodicTask doesn't honour "default task queue option"
 
 # Checklist
 
@@ -38,7 +36,9 @@ software -> celery:4.2.1 (windowlicker) kombu:4.2.1 py:3.6.4
 platform -> system:Darwin arch:64bit imp:CPython
 loader   -> celery.loaders.app.AppLoader
 settings -> transport:redis results:django-db
-
+```
+and
+```
 software -> celery:4.3.0rc1 (rhubarb) kombu:4.3.0 py:3.6.4
             billiard:3.6.0.0 py-amqp:2.4.1
 platform -> system:Darwin arch:64bit
@@ -52,7 +52,7 @@ settings -> transport:pyamqp results:disabled
 
 # Steps to Reproduce
 
-Install a celery beat
+Set up celery beat to run a task which has a custom queue configured (see example and the consequences below).
 
 ## Required Dependencies
 
@@ -93,9 +93,9 @@ N/A
 
 I couldn't figure a way to add the test to the integration tests; are there integration tests for celery beat?
 
+Repository for the source of the following example: https://github.com/asfaltboy/celery_reproduce_5355
+
 <details>
-Repository for the source of the following example:
-https://github.com/asfaltboy/celery_reproduce_5355
 
 <p>
 
